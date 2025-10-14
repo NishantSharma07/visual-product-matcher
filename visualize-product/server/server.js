@@ -31,6 +31,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// Helmet Security Configuration
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -41,40 +42,60 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
 /**
- * CORS Configuration
- * Allow cross-origin requests from specified origins
+ * ✅ UPDATED CORS Configuration
+ * Allow cross-origin requests from specified origins including Vercel deployments
  */
 const corsOptions = {
   origin: function (origin, callback) {
     const allowedOrigins = [
-      process.env.CLIENT_URL || 'http://localhost:5173',
+      process.env.CLIENT_URL,
+      'http://localhost:5173',
       'http://localhost:3000',
-      'http://localhost:5174'
+      'http://localhost:5174',
+      'https://styleforge-3zcjj2aub-nishant-sharmas-projects-87b49a17.vercel.app',
+      /^https:\/\/.*\.vercel\.app$/, // ✅ Allow all Vercel preview deployments
     ];
     
-    // Allow requests with no origin (mobile apps, curl, etc.)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (mobile apps, curl, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin matches any allowed origin (string or regex)
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (typeof allowed === 'string') {
+        return allowed === origin;
+      }
+      if (allowed instanceof RegExp) {
+        return allowed.test(origin);
+      }
+      return false;
+    });
+    
+    if (isAllowed) {
       callback(null, true);
     } else {
+      console.warn(`🚫 CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
 app.use(cors(corsOptions));
 
-
+// Body Parser Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-
+// Mongo Sanitization (prevent NoSQL injection)
 app.use(mongoSanitize({
   replaceWith: '_',
   onSanitize: ({ req, key }) => {
@@ -82,9 +103,10 @@ app.use(mongoSanitize({
   },
 }));
 
+// Compression Middleware
 app.use(compression());
 
-
+// Logging Middleware
 if (NODE_ENV === 'development') {
   app.use(morgan('dev'));
 } else {
@@ -93,6 +115,7 @@ if (NODE_ENV === 'development') {
 
 app.use(requestLogger);
 
+// Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
@@ -111,9 +134,10 @@ const limiter = rateLimit({
   },
 });
 
-// Apply rate limiting to all routes
+// Apply rate limiting to API routes
 app.use('/api/', limiter);
 
+// Special rate limiter for image upload routes
 const matchLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10, // 10 requests per minute
@@ -123,6 +147,7 @@ const matchLimiter = rateLimit({
   },
 });
 
+// ✅ Health Check Endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
@@ -134,12 +159,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-
+// ✅ Root Endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Welcome to StyleForge Visual Product Discovery API! 🎨✨',
     version: '2.0.0',
+    author: 'Nishant Sharma',
     endpoints: {
       health: '/health',
       categories: '/api/v1/categories',
@@ -147,38 +173,41 @@ app.get('/', (req, res) => {
       match: '/api/v1/match',
       analytics: '/api/v1/analytics',
     },
-    documentation: 'https://github.com/your-username/styleforge',
+    documentation: 'https://github.com/NishantSharma07/visual-product-matcher',
   });
 });
 
-
+// API Routes
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/match', matchLimiter, matchRoutes);
 // app.use('/api/v1/analytics', analyticsRoutes);
 
-
+// 404 Handler
 app.use(notFound);
 
+// Error Handler
 app.use(errorHandler);
 
-
+// Start Server
 const startServer = async () => {
   try {
+    // Connect to Database
     await connectDB();
 
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log('\n✨ ═══════════════════════════════════════════════════════ ✨');
       console.log('   🚀 StyleForge Visual Product Discovery Server');
       console.log('✨ ═══════════════════════════════════════════════════════ ✨\n');
       console.log(`   📡 Server running in ${NODE_ENV.toUpperCase()} mode`);
-      console.log(`   🌐 Listening on http://localhost:${PORT}`);
-      console.log(`   📊 Health check: http://localhost:${PORT}/health`);
-      console.log(`   🎨 API Base: http://localhost:${PORT}/api/v1`);
+      console.log(`   🌐 Listening on port ${PORT}`);
+      console.log(`   📊 Health check: /health`);
+      console.log(`   🎨 API Base: /api/v1`);
       console.log(`   ⏰ Started at: ${new Date().toLocaleString()}`);
       console.log('\n✨ ═══════════════════════════════════════════════════════ ✨\n');
     });
 
+    // Graceful Shutdown Handler
     const gracefulShutdown = async (signal) => {
       console.log(`\n\n⚠️  Received ${signal}. Starting graceful shutdown...`);
       
@@ -200,6 +229,7 @@ const startServer = async () => {
       }, 10000);
     };
 
+    // Handle shutdown signals
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
@@ -224,6 +254,7 @@ const startServer = async () => {
   }
 };
 
+// Start the server
 startServer();
 
 export default app;
